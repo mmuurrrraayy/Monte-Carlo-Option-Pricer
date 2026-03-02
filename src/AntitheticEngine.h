@@ -6,6 +6,13 @@
 #include "Option.h"
 #include "DataVariables.h"
 
+
+/*
+Reduced variance vs monte carlo using mirrored pricing
+By quadrupling paths, error is halved to converge faster.
+Averaging paired paths, cancels random noise and produces
+tighter price estimate
+*/
 class AntitheticEngine: public MonteCarloEngine{
         
     public:
@@ -14,20 +21,27 @@ class AntitheticEngine: public MonteCarloEngine{
             MonteCarloEngine(gbm, option, md,od,sd){}
 
             
-        double total_payoff(int path, double s0)override {
-             double total = 0.0;
+        totals total_payoff(int path, double s0)override {
+            totals t;
+            double total = 0.0;
+            double squared_total = 0.0;
+            //calculates asset price of each path
             for (int i = 0; i<path; i++){
                 double S= s0;
                 double minus_S = s0;
+                 //calculates asset price for every step
                 for (int step = 0; step<step_count; step++){
                     double Z= gbm.calc_Z();
                     S = gbm.calc_St(S, Z);
                     minus_S =  gbm.calc_St(minus_S, -Z);
                 }
-                total += (option.payoff(S)+option.payoff(minus_S))/2.0;
+                double antithetic = option.payoff(S)+option.payoff(minus_S)/2.0;
+                squared_total += std::pow(antithetic,2.0);
+                total += antithetic;
+                }
+                t.squared_total = squared_total;
+                t.total = total;
+                return t;
             }
-            return total;
-        }
-        
 };
 #endif

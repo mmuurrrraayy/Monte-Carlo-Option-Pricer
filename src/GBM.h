@@ -16,6 +16,7 @@
 #include "DataVariables.h"
 #include <cmath>
 #include <random>
+#include "Validator.h"
 
 class GBM{
     private:
@@ -34,7 +35,7 @@ class GBM{
         GBM(market_data market_data_,sim_data data_simul_): 
         market_data_(market_data_), 
         data_simul(data_simul_),
-        m(market_data_.mu - 0.5*(market_data_.sigma*market_data_.sigma)),
+        m(market_data_.r - 0.5*(market_data_.sigma*market_data_.sigma)),
         rng(data_simul.seed),
         normal(0.0,1.0){}
 
@@ -43,8 +44,14 @@ class GBM{
         }
 
 
+        /*
+        Calculates price given initial asset price and and 
+        random value
+        */
         double calc_St(double s0, double Z) {
-          return s0* std::exp(m*data_simul.time_step+
+            Validator::is_valid_positive_double(s0);
+            Validator::is_valid_positive_double(Z);
+            return s0* std::exp(m*data_simul.time_step+
                  market_data_.sigma*calc_Wt(Z));
         }
 

@@ -16,5 +16,14 @@
         unsigned int seed = 42;
         const double time_step = 1.0/252.0;
     };
+
+    struct payoff_info{
+                totals t;
+                double average, discounted;
+            };
+
+     struct totals{
+            double total, squared_total;
+    };
 #endif
 

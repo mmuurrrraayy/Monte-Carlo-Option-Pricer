@@ -4,6 +4,7 @@
 #include <string>
 #include <algorithm>
 #include "DataVariables.h"
+#include "Validator.h"
 
 enum class OptionType {Call, Put};
 
@@ -24,7 +25,11 @@ class Option{
             option_type(option_type) {}
 
 
+        /*
+        Calcaulates payoff of an option given price at a giiven time
+        */
         double payoff(double St){
+            Validator::is_valid_positive_double(St);
             switch(option_type){
                 case OptionType::Call:
                     return std::max(St - od.K, 0.0);

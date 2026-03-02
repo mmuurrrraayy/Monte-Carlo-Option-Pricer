@@ -23,7 +23,7 @@ class Validator{
         static void is_valid_positive_double(double check){
              try
                 {
-                    if(check>0){}
+                    if(check>0.0){}
                        return;
                 }
                 catch(const std::exception& e)
@@ -33,7 +33,7 @@ class Validator{
                 }
         }
 
-}
+};
 
 #endif
 

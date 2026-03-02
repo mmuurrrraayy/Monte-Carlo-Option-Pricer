@@ -3,8 +3,10 @@
 
 #include <string>
 #include <algorithm>
+#include <stdexcept>
 #include "DataVariables.h"
 #include "Validator.h"
+
 
 enum class OptionType {Call, Put};
 
@@ -17,11 +19,11 @@ class Option{
         OptionType option_type;
     
     public:
-        Option(market_data md,option_data od, sim_data sd,
+        Option(const market_data& md, const option_data& od, const sim_data& sd,
             OptionType option_type):
             md(md), 
-            sd(sd),
             od(od),
+            sd(sd),
             option_type(option_type) {}
 
 
@@ -35,6 +37,8 @@ class Option{
                     return std::max(St - od.K, 0.0);
                 case OptionType::Put:
                     return std::max(od.K - St, 0.0);
+                default:
+                    throw std::invalid_argument("Invalid OptionType in payoff");
             }
         }
 

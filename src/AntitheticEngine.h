@@ -9,9 +9,8 @@
 
 /*
 Reduced variance vs monte carlo using mirrored pricing
-By quadrupling paths, error is halved to converge faster.
-Averaging paired paths, cancels random noise and produces
-tighter price estimate
+Reduce variance by introducing negative correlation
+between pairs of simulation runs
 */
 class AntitheticEngine: public MonteCarloEngine{
         
@@ -35,8 +34,8 @@ class AntitheticEngine: public MonteCarloEngine{
                     S = gbm.calc_St(S, Z);
                     minus_S =  gbm.calc_St(minus_S, -Z);
                 }
-                double antithetic = option.payoff(S)+option.payoff(minus_S)/2.0;
-                squared_total += std::pow(antithetic,2.0);
+                double antithetic = (option.payoff(S)+option.payoff(minus_S)/2.0);
+                squared_total += antithetic*antithetic;
                 total += antithetic;
                 }
                 t.squared_total = squared_total;

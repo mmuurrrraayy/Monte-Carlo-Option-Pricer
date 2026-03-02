@@ -16,7 +16,7 @@ class Black_Scholes{
         double remaining_time; 
 
         double d_plus(double S){
-            return ((std::log(S/od.K)+(md.r+((md.sigma*md.sigma)/2.0)
+            return ((std::log(S/od.K)+(md.mu+((md.sigma*md.sigma)/2.0)
             *(remaining_time)))/(md.sigma*std::sqrt(remaining_time)));
         }
 
@@ -47,10 +47,10 @@ class Black_Scholes{
             switch(od.option_type){
                 case OptionType::Call:
                     return S*normalise(d1) - 
-                        (std::exp(-md.r*(remaining_time))
+                        (std::exp(-md.mu*(remaining_time))
                         *od.K*normalise(d2));
                 case OptionType::Put:
-                    return od.K*std::exp(-md.r*remaining_time) *
+                    return od.K*std::exp(-md.mu*remaining_time) *
                     normalise(-d2)-S*normalise(-d1);
                 default:
                     throw std::invalid_argument("Invalid option type");

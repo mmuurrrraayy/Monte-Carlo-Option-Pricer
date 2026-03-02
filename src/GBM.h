@@ -35,7 +35,7 @@ class GBM{
         GBM(market_data market_data_,sim_data data_simul_): 
         market_data_(market_data_), 
         data_simul(data_simul_),
-        m(market_data_.r - 0.5*(market_data_.sigma*market_data_.sigma)),
+        m(market_data_.mu - 0.5*(market_data_.sigma*market_data_.sigma)),
         rng(data_simul.seed),
         normal(0.0,1.0){}
 

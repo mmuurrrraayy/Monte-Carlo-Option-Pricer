@@ -9,10 +9,6 @@
 class Precision{
     private:
     
-        Option option;
-        market_data md;
-        option_data od;
-        sim_data sd;
         MonteCarloEngine mc;
         const double c = 1.96;
         int N;
@@ -21,22 +17,13 @@ class Precision{
          
       
         double get_average(){
-           return mc.average_payoff(t.total, N);
+           return mc.average_payoff(t , N);
         }
 
         
     public:
-        Precision(MonteCarloEngine& mc, Option& option,market_data md,
-            option_data od, sim_data sd, int path,  double s0,totals t):
-            mc(mc),
-            option(option),
-            md(md), 
-            sd(sd),
-            od(od),
-            N(path),
-            s0(s0),
-            t(t)
-            {}
+        Precision(MonteCarloEngine& mc, int path, totals t)
+        : mc(mc), N(path), t(t) {}
 
         struct interval{
             double ci_minus, ci_plus;

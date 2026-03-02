@@ -19,7 +19,7 @@ class MonteCarloEngine{
         discount factor
         */
         double discounted(double average){
-            return std::exp(-md.r*od.T)*average;
+            return std::exp(-md.mu*od.T)*average;
         }
     
     protected:

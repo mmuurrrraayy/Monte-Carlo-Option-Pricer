@@ -1,6 +1,7 @@
 #ifndef Black_Scholes_H
 #define Black_Scholes_H
 #include <cmath>
+#include "OptionType.h"
 #include "DataVariables.h"
 #include "Option.h"
 #include "Validator.h"
@@ -15,13 +16,15 @@ class Black_Scholes{
         double time;
         double remaining_time; 
 
-        double d_plus(double S){
-            return ((std::log(S/od.K)+(md.mu+((md.sigma*md.sigma)/2.0)
-            *(remaining_time)))/(md.sigma*std::sqrt(remaining_time)));
+        double d_plus(double S) {
+            double numerator = std::log(S / od.K) + (md.mu + (md.sigma * md.sigma) / 2.0)
+                * remaining_time;
+            double denominator = md.sigma * std::sqrt(remaining_time);
+            return  numerator / denominator;
         }
 
-        double d_minus(double S){
-            return d_plus(S) - md.sigma * std::sqrt(remaining_time);
+        double d_minus(double S, double d_p){
+            return d_p - md.sigma * std::sqrt(remaining_time);
         }
 
         double normalise(double d){
@@ -35,6 +38,9 @@ class Black_Scholes{
         time(time)
         {
             remaining_time = od.T - time;
+            if (remaining_time <= 0){
+                throw std::invalid_argument("time remaining must be greater than 0");
+            }
         }
     
         /*
@@ -43,12 +49,14 @@ class Black_Scholes{
         double price(double S){
             Validator::is_valid_positive_double(S);
             double d1 = d_plus(S);
-            double d2 = d_minus(S);
+            double d2 = d_minus(S, d1);
+            double price;
             switch(od.option_type){
                 case OptionType::Call:
-                    return S*normalise(d1) - 
+                     price =  S*normalise(d1) - 
                         (std::exp(-md.mu*(remaining_time))
                         *od.K*normalise(d2));
+                    return price;
                 case OptionType::Put:
                     return od.K*std::exp(-md.mu*remaining_time) *
                     normalise(-d2)-S*normalise(-d1);

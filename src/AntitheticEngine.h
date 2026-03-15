@@ -34,7 +34,7 @@ class AntitheticEngine: public MonteCarloEngine{
                     S = gbm.calc_St(S, Z);
                     minus_S =  gbm.calc_St(minus_S, -Z);
                 }
-                double antithetic = (option.payoff(S)+option.payoff(minus_S)/2.0);
+                double antithetic = (option.payoff(S)+option.payoff(minus_S))/2.0;
                 squared_total += antithetic*antithetic;
                 total += antithetic;
                 }

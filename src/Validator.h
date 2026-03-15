@@ -1,6 +1,7 @@
 #ifndef Validator_H
 #define Validator_H
 #include <iostream>
+#include <stdexcept>
 
 class Validator{
     public:
@@ -14,7 +15,7 @@ class Validator{
                 }
                 catch(const std::exception& e)
                 {   
-                    std::cout << "Invalid variable" << check<< std::endl;
+                    std::cout << "Invalid variable" << check<< "\n error:" << e.what() <<std::endl;
                 
                 }
         }
@@ -28,8 +29,7 @@ class Validator{
                 }
                 catch(const std::exception& e)
                 {   
-                    std::cout << "Invalid variable" << check<< std::endl;
-                
+                    std::cout << "Invalid variable" << check << "\n error:" << e.what() << std::endl;
                 }
         }
 

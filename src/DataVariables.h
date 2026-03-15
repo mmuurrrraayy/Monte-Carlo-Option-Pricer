@@ -1,6 +1,6 @@
 #ifndef DataVariables_H
 #define DataVariables_H
-#include "Option.h"
+#include "OptionType.h"
 
     struct market_data{
         double s0, mu, sigma;
@@ -26,5 +26,6 @@
                 totals t;
                 double average, discounted;
             };
+
 #endif
 

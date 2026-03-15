@@ -13,14 +13,7 @@ class MonteCarloEngine{
 
     private:
         
-        /*
-        Calculates present price of option 
-        based on future average multiplied by 
-        discount factor
-        */
-        double discounted(double average){
-            return std::exp(-md.mu*od.T)*average;
-        }
+     
     
     protected:
 
@@ -73,6 +66,15 @@ class MonteCarloEngine{
         double average_payoff(const totals& t, int paths){
             Validator::is_valid_positive_integer(paths);
             return t.total / (double) paths;
+        }
+
+        /*
+       Calculates present price of option
+       based on future average multiplied by
+       discount factor
+       */
+        double discounted(double average) {
+            return std::exp(-md.mu * od.T) * average;
         }
 
 

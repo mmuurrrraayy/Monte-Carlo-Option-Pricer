@@ -16,8 +16,8 @@ class Precision{
         totals t;
          
       
-        double get_average(){
-           return mc.average_payoff(t , N);
+        double get_discounted(){
+           return mc.discounted(mc.average_payoff(t , N));
         }
 
         
@@ -32,7 +32,7 @@ class Precision{
         
         interval calc_CI(){
             interval ci;
-            double mean = get_average();
+            double mean = get_discounted();
             double variance = mc.calc_variance(t.squared_total, mean, N);
             double standard_error = (c*(std::sqrt(variance/(double)N)));
             ci.ci_minus = mean - standard_error;

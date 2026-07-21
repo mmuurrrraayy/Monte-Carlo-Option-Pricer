@@ -1,9 +1,10 @@
 #ifndef DataVariables_H
 #define DataVariables_H
-#include "OptionType.h"
+
+enum class OptionType {Call, Put};
 
     struct market_data{
-        double s0, mu, sigma;
+        double s0, r, mu, sigma;
     };
 
     struct option_data{
@@ -16,16 +17,4 @@
         unsigned int seed = 42;
         const double time_step = 1.0/252.0;
     };
-
-     struct totals{
-            double total =0.0;
-            double squared_total =0.0;
-    };
-
-     struct payoff_info{
-                totals t;
-                double average, discounted;
-            };
-
 #endif
-

@@ -24,6 +24,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <intrin.h>
+using core_mask_t = ULONG_PTR;
+#else
+using core_mask_t = std::uint64_t;
 #endif
 
 // ---------------------------------------------------------------- machine info
@@ -31,8 +34,8 @@
 // One affinity mask per PHYSICAL core. hardware_concurrency() would count SMT
 // siblings, and an unpinned thread may land on a sibling of an already-busy
 // core, which halves that core's throughput for no visible reason.
-static std::vector<ULONG_PTR> core_masks() {
-    std::vector<ULONG_PTR> masks;
+static std::vector<core_mask_t> core_masks() {
+    std::vector<core_mask_t> masks;
 #ifdef _WIN32
     auto len = DWORD{0};
     GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);

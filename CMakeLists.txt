@@ -55,3 +55,9 @@ add_test(NAME check_greeks COMMAND check_greeks)
 add_executable(check_serial tests/check_serial.cpp)
 target_link_libraries(check_serial PRIVATE mcpricer)
 add_test(NAME check_serial COMMAND check_serial)
+
+# CLI smoke test -- runs through ctest rather than an OS-specific shell step,
+# so the Debug/Release output subdirectory that MSVC's multi-config generator
+# adds (build/Release/price.exe vs. build/price on single-config generators)
+# is resolved by ctest itself instead of being hard-coded here.
+add_test(NAME price_smoke COMMAND price --paths 20000 --threads 1)

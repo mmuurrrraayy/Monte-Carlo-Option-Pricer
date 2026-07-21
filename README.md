@@ -1,5 +1,7 @@
 # Monte Carlo Option Pricer
 
+[![CI](https://github.com/mmuurrrraayy/Monte-Carlo-Option-Pricer/actions/workflows/ci.yml/badge.svg)](https://github.com/mmuurrrraayy/Monte-Carlo-Option-Pricer/actions/workflows/ci.yml)
+
 A C++17 Monte Carlo engine for pricing European options under risk-neutral
 geometric Brownian motion, with full Greeks, antithetic variance reduction,
 multithreaded execution, and validation against closed-form Black-Scholes.
@@ -245,7 +247,6 @@ scratch copy and confirmed to fail the build's `ctest`:
 
 ## Known limitations
 
-- No CI.
 - Path simulation runs 252 steps for a payoff that only depends on S_T. For European options a single draw of the terminal log-return would be exact and ~252x cheaper; the per-step loop is groundwork for the path-dependent payoffs below, which don't exist yet.
 - The serial engine (`MonteCarloEngine`/`GBM`/`Precision`) and `ParallelEngine` are separate implementations that share only the payoff and parameter structs.
 - `Option` dispatches on an enum, so new payoffs mean editing the class.

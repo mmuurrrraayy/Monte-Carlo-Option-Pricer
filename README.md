@@ -42,9 +42,9 @@ everything.
 ## What it does
 
 - European call and put pricing by Monte Carlo simulation of price paths (252 steps per year), under the risk-neutral drift.
-- A closed-form Black-Scholes engine used purely as a reference to validate price and Greeks — it never prices anything itself.
+- A closed-form Black-Scholes engine used purely as a reference to validate price and Greeks, it never prices anything itself.
 - Confidence intervals from the Bessel-corrected sample variance of the discounted payoffs, computed in the same pass as the mean rather than from a second, independently drawn batch.
-- Full Greeks — delta, vega and rho by pathwise differentiation, gamma by the likelihood-ratio (Broadie-Glasserman) estimator, theta by a common-random-numbers central difference — each with its own standard error rather than as a bare number.
+- Full Greeks — delta, vega and rho by pathwise differentiation, gamma by the likelihood-ratio (Broadie-Glasserman) estimator, theta by a common-random-numbers central difference — each with its own standard error.
 - Antithetic variates, measured against the plain estimator at equal work (below).
 - A multithreaded engine using a counter-based RNG (splitmix64 mixer feeding Box-Muller) keyed by each path's global index, so the draws a path receives don't depend on thread count or partitioning. No shared RNG state, no lock. Per-thread accumulators are padded to a cache line to avoid false sharing.
 
@@ -81,9 +81,7 @@ replications per N, not read off the engine's own error bar:
 Measured with `bench anti <pairs> <K>`. The comparison is `pairs` pair-averages
 (= 2×pairs simulated paths) against the plain estimator at 2×pairs paths, so
 both sides simulate the same number of paths. Round-robin schedule, first round
-discarded, median of 5. Measured on the CMake build, on AC power at 100% charge
-— timing on battery is meaningless on this machine, for the reasons in
-`bench/REPORT.md`.
+discarded, median of 5. Measured on the CMake build, on AC power at 100% charge.
 
 - **var_ratio** = (SE_plain / SE_anti)² at equal path count. A value of 1.0 means pairing bought nothing beyond spending those paths on the plain estimator.
 - **efficiency** = var_ratio × (t_plain / t_anti) — the work-normalised figure, which charges antithetic for its extra `exp()` per step.
@@ -104,8 +102,7 @@ in the money the payoff is nearly linear in the driving noise, so the two legs
 are almost perfectly anticorrelated and the technique is worth ~34x. Deep out of
 the money both legs are usually zero together, the anticorrelation collapses,
 and antithetic is close to a waste of the extra arithmetic. **The gain is a
-property of the payoff, not of the technique** — quoting a single headline
-multiple for "antithetic variates" would be meaningless.
+property of the payoff, not of the technique.**
 
 The ATM variance ratio holds steady as N grows, confirming it is structural
 rather than a sampling artifact:
@@ -117,12 +114,12 @@ rather than a sampling artifact:
 | 400,000 | 800,000 | 0.0164653 | 0.0116755 | 1.989 | 3.13x |
 
 The two tables overlap at one configuration (250,000 pairs, K = 100) and report
-efficiency as 3.10 and 3.17 — separate runs, and the difference is timing noise.
+efficiency as 3.10 and 3.17; separate runs, the difference is timing noise.
 Everything not derived from a clock is reproducible: `var_ratio` comes out
 bitwise identical (1.9997) in both runs, as do both standard errors. Only the
 time-derived efficiency moves. Repeat runs of the K = 60 configuration spanned
 34.1x to 37.6x, about 10%, so treat the efficiency column as one significant
-figure — the variance columns are exact, the speed columns are indicative.
+figure.
 
 The time ratio deserves a note: antithetic simulates the same number of paths in
 ~0.65x the time, because the mirror leg negates an already-drawn Z rather than
@@ -141,13 +138,12 @@ reduction and half is that saved RNG work.
 | 4 | 10.448018599844572 | 5.68e-14 | 32 |
 
 Every path draws the same random numbers at any thread count, since draws are
-keyed by global path index — so this is not RNG divergence. It is floating-point
+keyed by global path index so this is not RNG divergence. It is floating-point
 addition order: with p threads the total is a sum of p partial sums, and FP
 addition isn't associative. The largest gap is 32 ulps (one ulp at 10.448 is
 1.776e-15), roughly twelve orders of magnitude below the Monte Carlo standard
-error at this N (0.03295). Exact cross-thread determinism is achievable — fix
-the block count independent of p and reduce in block order — but wasn't
-implemented, since the gap it closes is statistically invisible.
+error at this N (0.03295). Exact cross-thread determinism is achievable by fixing
+the block count independent of p and reduce in block order.
 
 These low-order digits are build-dependent: a hand-compiled `-O2 -march=native`
 binary gives 1 and 31 ulps instead, because `-march=native` licenses different
@@ -172,9 +168,7 @@ spread is wide enough that 1.77x should be read as approximate; the 1- and
 4-thread rows, at 3.6% and 4.5%, comfortably support the efficiency drop at 4
 threads being real scaling behaviour rather than noise. An earlier measurement
 on battery showed 83–88% spread and was discarded rather than reported;
-`bench/REPORT.md` documents that diagnosis, along with two other measurement
-traps found along the way (schedule ordering aliasing thermal drift into the
-speedup, and core pinning *hurting* throughput on a thermally-limited part).
+`bench/REPORT.md` documents that diagnosis.
 
 ## Layout
 

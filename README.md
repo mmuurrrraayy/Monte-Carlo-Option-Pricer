@@ -2,252 +2,349 @@
 
 [![CI](https://github.com/mmuurrrraayy/Monte-Carlo-Option-Pricer/actions/workflows/ci.yml/badge.svg)](https://github.com/mmuurrrraayy/Monte-Carlo-Option-Pricer/actions/workflows/ci.yml)
 
-A C++17 Monte Carlo engine for pricing European options under risk-neutral
-geometric Brownian motion, with full Greeks, antithetic variance reduction,
-multithreaded execution, and validation against closed-form Black-Scholes.
+A header-only C++23 / AVX2+FMA (`x86-64-v3`) Monte Carlo and Black-Scholes
+option-pricing library with static policy-based polymorphism, path-dependent
+exotics, Heston stochastic volatility, forward-mode automatic differentiation,
+a batched SoA Black-Scholes / Implied Volatility engine, and a persistent
+physical-core-pinned thread pool with exact bitwise thread-count invariance.
 
-Every number in this README is measured on this repository by the harness in
-`bench/`, at the parameters stated. Nothing is quoted from theory or
-extrapolated. See `bench/REPORT.md` for the full methodology.
+Every number in this README is measured on this repository by `bench_pricer` on
+an **AMD Ryzen 5 5600X** (6 physical cores / 12 threads, `g++ 16.2.0`, CMake
+Release). Earlier revisions of this README reported measurements from a 4-core
+Intel Core i5-1135G7 laptop; the C++17 `mcpricer` baseline (`755f55e`) was
+re-measured on this same Ryzen 5 5600X before retirement so every Before vs.
+After comparison below is same-machine. See [`bench/REPORT.md`](bench/REPORT.md)
+for the full methodology and raw tables.
 
 ## Quick start
 
 ```bash
-cmake -B build && cmake --build build
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ./build/price --s0 100 --k 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --greeks
 ```
 
-```
-call  S0 100  K 100  r 0.05  sigma 0.2  T 1
-paths 1000000  steps/path 252  threads 8  seed 42
+```text
+call  gbm  european  S0 100  K 100  r 0.05  q 0  sigma 0.2  T 1
+paths 1000000  steps/path 1 (exact)  threads 6  seed 42
 
-price      10.43991191
-std_error  0.01472391
-95% CI     [10.41105305, 10.46877078]
+price      10.45137900
+std_error  0.01472664
+95% CI     [10.42251532, 10.48024268]
 
-black_scholes 10.45058357   diff -0.01067166   (-0.72 se)
+black_scholes 10.45058357   diff +0.00079543   (+0.05 se)
 
 greek           value     std_error  black_scholes    err_se
-delta      0.63667096    0.00057633     0.63683065     -0.28
-gamma      0.01884335    0.00013873     0.01876202      0.59
-vega      37.47267562    0.07576323    37.52403469     -0.68
-theta     -6.40864318    0.00886991    -6.41402755      0.61
-rho       53.22718392    0.04722283    53.23248155     -0.11
+delta      0.63708241    0.00057634     0.63683065      0.44
+gamma      0.01876157    0.00003789     0.01876202     -0.01
+vega      37.52314142    0.07577584    37.52403469     -0.01
+theta     -6.41515852    0.00887151    -6.41402755     -0.13
+rho       53.25686228    0.04721926    53.23248155      0.52
 ```
 
-`--antithetic` switches to the paired estimator, `--threads` sets the worker
-count, `--no-reference` drops the closed-form column. `price --help` lists
-everything.
-
-## What it does
-
-- European call and put pricing by Monte Carlo simulation of price paths (252 steps per year), under the risk-neutral drift.
-- A closed-form Black-Scholes engine used purely as a reference to validate price and Greeks, it never prices anything itself.
-- Confidence intervals from the Bessel-corrected sample variance of the discounted payoffs, computed in the same pass as the mean rather than from a second, independently drawn batch.
-- Full Greeks — delta, vega and rho by pathwise differentiation, gamma by the likelihood-ratio (Broadie-Glasserman) estimator, theta by a common-random-numbers central difference — each with its own standard error.
-- Antithetic variates, measured against the plain estimator at equal work (below).
-- A multithreaded engine using a counter-based RNG (splitmix64 mixer feeding Box-Muller) keyed by each path's global index, so the draws a path receives don't depend on thread count or partitioning. No shared RNG state, no lock. Per-thread accumulators are padded to a cache line to avoid false sharing.
-
-## Evidence
-
-Unless stated otherwise: European call, S0 = K = 100, r = 0.05, sigma = 0.20,
-T = 1.0, closed-form price **10.4505835722**.
-
-### Convergence to closed form
-
-Mean over 24 independent replications per N (`bench converge 24`):
-
-| N | Mean MC price | Bias vs closed form |
-|---|---|---|
-| 1,000 | 10.2601848 | -0.1903988 |
-| 10,000 | 10.4362023 | -0.0143813 |
-| 100,000 | 10.4578672 | +0.0072836 |
-| 1,000,000 | 10.4516914 | +0.0011078 |
-
-Bias shrinks ~170x from N=1,000 to N=1,000,000 and changes sign along the way —
-consistent with sampling noise around the true value, not a systematic offset.
-
-### Standard error scales as N^-0.5
-
-Measured empirically as the sample standard deviation of price across 24
-replications per N, not read off the engine's own error bar:
-
-- Least-squares fit of log(SE) on log(N): fitted exponent **-0.5567**, R² = 0.9970, 1-sigma uncertainty ≈ ±0.029 on the slope.
-- That is ~2 sigma from the theoretical -0.5, driven mainly by the smallest N; the three larger sizes sit under the engine's own error estimate. Read as consistent with -0.5, not a clean pass — more replications would settle it.
-- No evidence of correlated random-number streams across replications.
-
-### Antithetic variates, at equal work
-
-Measured with `bench anti <pairs> <K>`. The comparison is `pairs` pair-averages
-(= 2×pairs simulated paths) against the plain estimator at 2×pairs paths, so
-both sides simulate the same number of paths. Round-robin schedule, first round
-discarded, median of 5. Measured on the CMake build, on AC power at 100% charge.
-
-- **var_ratio** = (SE_plain / SE_anti)² at equal path count. A value of 1.0 means pairing bought nothing beyond spending those paths on the plain estimator.
-- **efficiency** = var_ratio × (t_plain / t_anti) — the work-normalised figure, which charges antithetic for its extra `exp()` per step.
-
-At 250,000 pairs (= 500,000 paths), sweeping the strike:
-
-| Strike | Moneyness | var_ratio | Implied corr. ρ | Time ratio | Efficiency |
-|---|---|---|---|---|---|
-| 60 | deep ITM | 23.70 | -0.958 | 0.70 | **34.1x** |
-| 80 | ITM | 8.61 | -0.884 | 0.65 | **13.3x** |
-| 100 | ATM | 2.00 | -0.500 | 0.65 | **3.10x** |
-| 120 | OTM | 1.16 | -0.141 | 0.62 | **1.87x** |
-| 140 | deep OTM | 1.04 | -0.040 | 0.66 | **1.58x** |
-
-Since Var((X+Y)/2) = σ²(1+ρ)/2, the variance ratio at equal paths is exactly
-1/(1+ρ); the ρ column is that identity inverted, and it is the whole story. Deep
-in the money the payoff is nearly linear in the driving noise, so the two legs
-are almost perfectly anticorrelated and the technique is worth ~34x. Deep out of
-the money both legs are usually zero together, the anticorrelation collapses,
-and antithetic is close to a waste of the extra arithmetic. **The gain is a
-property of the payoff, not of the technique.**
-
-The ATM variance ratio holds steady as N grows, confirming it is structural
-rather than a sampling artifact:
-
-| Pairs | Equiv. paths | SE plain | SE anti | var_ratio | Efficiency |
-|---|---|---|---|---|---|
-| 100,000 | 200,000 | 0.0329501 | 0.0232821 | 2.003 | 3.20x |
-| 250,000 | 500,000 | 0.0208659 | 0.0147555 | 2.000 | 3.17x |
-| 400,000 | 800,000 | 0.0164653 | 0.0116755 | 1.989 | 3.13x |
-
-The two tables overlap at one configuration (250,000 pairs, K = 100) and report
-efficiency as 3.10 and 3.17; separate runs, the difference is timing noise.
-Everything not derived from a clock is reproducible: `var_ratio` comes out
-bitwise identical (1.9997) in both runs, as do both standard errors. Only the
-time-derived efficiency moves. Repeat runs of the K = 60 configuration spanned
-34.1x to 37.6x, about 10%, so treat the efficiency column as one significant
-figure.
-
-The time ratio deserves a note: antithetic simulates the same number of paths in
-~0.65x the time, because the mirror leg negates an already-drawn Z rather than
-drawing a new one, and Box-Muller (a `log`, a `sqrt`, a `cos`) is the expensive
-part of the inner loop. Roughly half the measured efficiency gain is variance
-reduction and half is that saved RNG work.
-
-### Cross-thread reproducibility — not bitwise, and that's expected
-
-`bench repro 200000` on the CMake build (`-O3 -DNDEBUG`), identical across runs:
-
-| Threads | Price | Difference vs 1 thread | In ulps |
-|---|---|---|---|
-| 1 | 10.448018599844515 | 0 | 0 |
-| 2 | 10.448018599844522 | 7.11e-15 | 4 |
-| 4 | 10.448018599844572 | 5.68e-14 | 32 |
-
-Every path draws the same random numbers at any thread count, since draws are
-keyed by global path index so this is not RNG divergence. It is floating-point
-addition order: with p threads the total is a sum of p partial sums, and FP
-addition isn't associative. The largest gap is 32 ulps (one ulp at 10.448 is
-1.776e-15), roughly twelve orders of magnitude below the Monte Carlo standard
-error at this N (0.03295). Exact cross-thread determinism is achievable by fixing
-the block count independent of p and reduce in block order.
-
-These low-order digits are build-dependent: a hand-compiled `-O2 -march=native`
-binary gives 1 and 31 ulps instead, because `-march=native` licenses different
-FP contraction. Both agree to 15 significant figures.
-
-### Parallel scaling
-
-N = 250,000 paths, median of 5 runs, on the CMake build, on AC power at 100%
-charge (`bench sweep 250000`):
-
-| Threads | Median time (s) | Speedup | Efficiency | Spread across the 5 runs |
-|---|---|---|---|---|
-| 1 | 1.8614 | 1.00x | 1.00 | 3.6% |
-| 2 | 1.0526 | 1.77x | 0.88 | 13.5% |
-| 4 | 0.6339 | 2.94x | 0.73 | 4.5% |
-
-Price is 10.4357897169 at every thread count, so the three rows are timing the
-same computation.
-
-Run-to-run spread is 4–14%. The 2-thread row is the noisy one and its 13.5%
-spread is wide enough that 1.77x should be read as approximate; the 1- and
-4-thread rows, at 3.6% and 4.5%, comfortably support the efficiency drop at 4
-threads being real scaling behaviour rather than noise. An earlier measurement
-on battery showed 83–88% spread and was discarded rather than reported;
-`bench/REPORT.md` documents that diagnosis.
-
-## Layout
-
-```
-include/mcpricer/   Public headers (declarations only).
-src/                Implementation (.cpp, one per header).
-apps/price.cpp      Command-line pricer.
-tests/              Correctness checks, run through ctest.
-bench/              Performance harness and the benchmark report.
-```
-
-`mcpricer` builds as a static library that `price`, `bench`, and the two check
-binaries all link against.
-
-The engine splits into: a GBM path simulator; an `Option` holding the payoff and
-its derivative (used by the pathwise Greeks); a serial `MonteCarloEngine` with an
-antithetic subclass and a `Precision` helper for confidence intervals; a
-closed-form `Black_Scholes` reference; and a standalone `ParallelEngine` that
-reimplements pricing, antithetic pricing, and the Greeks on the counter-based
-RNG with cache-line-padded accumulators. `DataVariables.h` holds the shared
-market/option/simulation parameter structs.
-
-## Build / run
+Other CLI modes:
 
 ```bash
-cmake -B build && cmake --build build
-ctest --test-dir build --output-on-failure   # check_serial, check_greeks
-./build/price --help
-./build/bench anti 250000 100
+# Heston stochastic volatility (Broadie-Kaya Case I) with antithetic variates & sensitivities
+./build/price --model heston --s0 100 --k 100 --r 0.0319 --v0 0.010201 --kappa 6.21 \
+              --heston-theta 0.019 --xi 0.61 --rho -0.7 --T 1 --paths 100000 --steps 252 \
+              --antithetic --greeks
+
+# Path-dependent exotics (Geometric/Arithmetic Asian, Barrier, Fixed/Floating Lookback)
+./build/price --payoff barrier --barrier 130 --paths 100000 --steps 252 --greeks
+./build/price --payoff asian-arith --paths 100000 --steps 252 --antithetic
+./build/price --payoff lookback --lookback-style floating --paths 100000 --steps 252
+
+# Batched AVX2 SoA Black-Scholes chain + Implied Volatility solver
+./build/price --chain 1024 --greeks --iv
+./build/price --iv 10.450583572185565
 ```
 
-Without CMake:
+`price --help` lists all options (including continuous dividend yield `--q`,
+`--force-multi-step`, `--no-reference`, `--seed`, and `--threads`).
+
+## Architecture
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ Entry & Validation Boundary (zero-exception, zero-RTTI)                                │
+│ ┌───────────────────────────────┐     ┌──────────────────────────────────────────────┐ │
+│ │ apps/price.cpp + cpuid_guard  │────>│ core/types.hpp                               │ │
+│ │ runtime AVX2 + FMA check      │     │ MarketParams / HestonParams -> std::expected │ │
+│ └───────────────────────────────┘     └───────────────────────┬──────────────────────┘ │
+└───────────────────────────────────────────────────────────────┼────────────────────────┘
+                            ┌───────────────────────────────────┴─────────┐
+                            v                                             v
+┌───────────────────────────────────────────────────────┐  ┌─────────────────────────────┐
+│ Monte Carlo Pipeline (engines/monte_carlo.hpp)        │  │ Batched Black-Scholes & IV  │
+│ ┌─ Compile-Time Policies (core/concepts.hpp) ───────┐ │  │ (engines/black_scholes.hpp) │
+│ │ Process  : GBMProcess | HestonProcess             │ │  │                             │
+│ │ Payoff   : European | Asian | Barrier | Lookback  │ │  │                             │
+│ │ Sampling : Standard | Antithetic                  │ │  │ ┌─────────────────────────┐ │
+│ └─────────────────────────┬─────────────────────────┘ │  │ │ OptionChainSoA          │ │
+│                           v                           │  │ │ 64B-aligned,            │ │
+│ ┌───────────────────────────────────────────────────┐ │  │ │ 4-wide padded layout    │ │
+│ │ MonteCarloEngine                                  │ │  │ └────────────┬────────────┘ │
+│ │ concept dispatch & requires Greek guards          │ │  │              │              │
+│ └────────────┬──────────────────────────┬───────────┘ │  │              │              │
+│              v                          v             │  │              v              │
+│ ┌─────────────────────────┐ ┌───────────────────────┐ │  │ ┌─────────────────────────┐ │
+│ │ engines/thread_pool.hpp │ │ core/dual.hpp         │ │  │ │ AVX2 Black-Scholes      │ │
+│ │ Pinned std::jthreads    │ │ Dual / Jet over Vec4d │ │  │ │ 5-Greek kernels &       │ │
+│ │ 4096-path chunks        │ │ Pathwise, LR, CRN     │ │  │ │ Safeguarded-Halley IV   │ │
+│ └────────────┬────────────┘ └───────────┬───────────┘ │  │ │ (OTM Manaster-Koehler)  │ │
+│              v                          v             │  │ └─────────────────────────┘ │
+│ ┌───────────────────────────────────────────────────┐ │  │                             │
+│ │ core/stats.hpp                                    │ │  │                             │
+│ │ Pilot-shifted ChunkAccum -> ordered merge_chan    │ │  │                             │
+│ └───────────────────────────────────────────────────┘ │  │                             │
+└───────────────────────────┬───────────────────────────┘  └──────────────┬──────────────┘
+                            ┆ uses xoshiro_avx2,                          ┆ uses avx2_math
+                            ┆ avx2_math, Vec4d                            ┆ & Vec4d
+                            v                                             v
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ AVX2 + FMA Compute Core (include/pricer/simd/)                                         │
+│ ┌──────────────────────────┐ ┌──────────────────────────┐ ┌──────────────────────────┐ │
+│ │ xoshiro_avx2.hpp         │ │ avx2_math.hpp            │ │ vec4d.hpp                │ │
+│ │ Xoshiro256++ x4          │ │ exp, log, sincos         │ │ Vec4d (4x double)        │ │
+│ │ branchless Box-Muller    │ │ norm_cdf / norm_pdf      │ │ AVX2 + FMA value type    │ │
+│ └──────────────────────────┘ └──────────────────────────┘ └──────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Header-only C++23 core (`include/pricer/`)**: zero-exception, zero-RTTI
+  contract verified by a dedicated `test_no_exceptions` build
+  (`-fno-exceptions -fno-rtti` / `/EHs-c- /GR-`). Inputs are validated once at
+  the API boundary via `std::expected<T, ValidationError>` (including negative
+  `r` and dividend yield `q`).
+- **Static policy-based polymorphism**: `MonteCarloEngine<Process, Payoff, Sampling>`
+  dispatches at compile time via C++23 concepts (`ProcessPolicy`, `PayoffPolicy`,
+  `SamplingPolicy`). Unsupported Greek combinations (e.g. naive CRN Gamma on
+  discontinuous Barriers or GBM `Dual` Vega on Heston) are rejected at compile
+  time via `requires`.
+- **Hand-tuned AVX2 + FMA (`x86-64-v3`)**: `Vec4d` value type, `< 1e-15`
+  vectorized `exp_avx2`, `log_avx2`, `sincos_avx2`, and Cody-rational
+  `norm_cdf_avx2` (preserving left-tail relative accuracy to `< 1e-13`), plus
+  4-wide transposed `Xoshiro256++ x4` and branchless AVX2 Box-Muller. A
+  separate non-AVX2 translation unit (`apps/cpuid_guard.cpp`) verifies AVX2+FMA
+  at CLI startup.
+- **Models & payoffs**:
+  - `GBMProcess` (exact 1-step terminal sampling for European, or multi-step log-space)
+  - `HestonProcess` (branchless Full Truncation Euler)
+  - `EuropeanPayoff`, `GeometricAsianPayoff`, `ArithmeticAsianPayoff`,
+    `BarrierPayoff` (`UpOut`/`DownOut`/`UpIn`/`DownIn` in log-space),
+    `LookbackPayoff` (`FixedStrike`/`FloatingStrike` in log-space)
+- **Forward-mode AD & Greeks**: `Dual<T>` / `Jet<T, 3>` over `double` and `Vec4d`
+  for single-pass pathwise `Delta`/`Vega`/`Rho`, mixed pathwise-LR `Gamma`
+  (European & Geometric Asian), exact homogeneity (`Gamma = 0`, Floating
+  Lookback), CRN central-difference `Theta`, and safe CRN sensitivities for
+  Barriers and Heston (`d_v0`, `d_long_run_var`, `rho`, `theta`).
+- **Batched Black-Scholes & AVX2 IV**: 64-byte-aligned `OptionChainSoA` with
+  closed-form 5-Greek AVX2 kernels and an OTM-reduced Manaster–Koehler
+  safeguarded-Halley AVX2 IV solver converging in sigma-space to `1e-12`.
+- **Persistent `ThreadPool` & exact cross-thread determinism**: pre-spawned
+  `std::jthread` workers pinned to distinct physical cores (without permanently
+  altering the caller's affinity), fixed `4096`-path chunk-keyed RNG seeding,
+  pilot-shifted AVX2 chunk accumulators, cache-line-isolated chunk slots, and
+  deterministic chunk-ordered Chan variance merging. The pool accepts **one
+  caller at a time**: engines may share a `ThreadPool*`, but their `price*()`
+  calls must not overlap across threads (use one pool per concurrent caller).
+
+## Evidence (Ryzen 5 5600X, `g++ 16.2.0` Release)
+
+Unless stated otherwise: European call, `S0 = K = 100`, `r = 0.05`, `q = 0.0`,
+`sigma = 0.20`, `T = 1.0`, closed-form price **10.4505835722**.
+
+### Before (`mcpricer` C++17 @ `755f55e`) vs. After (`pricer` C++23 / AVX2)
+
+Both columns were measured on the **same AMD Ryzen 5 5600X** (`g++ 16.2.0`,
+CMake Release). European speedups are split explicitly into **like-for-like**
+(252-step new vs. 252-step legacy) and **algorithmic** (1-step exact European
+vs. 252-step legacy):
+
+| Workload | Legacy C++17 (`mcpricer`) | Modern C++23/AVX2 (`pricer`) | Speedup |
+|---|---:|---:|---:|
+| Black-Scholes price-only (`N = 16,384`) | `124.13 ns/opt` | `10.49 ns/opt` (`95.3 M/s`) | **11.8x** |
+| Black-Scholes price + 5 Greeks (`N = 16,384`) | `548.87 ns/opt` | `12.39 ns/opt` (`80.7 M/s`) | **44.3x** |
+| Black-Scholes IV Halley AVX2 (`N = 16,384`) | *(not implemented)* | `77.28 ns/opt` (`12.9 M/s`) | — |
+| **Like-for-like 252-step** GBM Plain (100k, 1T) | `3001.6 ms` (`0.033 M/s`) | `45.98 ms` (`2.17 M/s`) | **65.3x** |
+| **Like-for-like 252-step** GBM Plain (100k, 6T) | `632.7 ms` (`0.158 M/s`) | `7.97 ms` (`12.55 M/s`) | **79.4x** |
+| **Like-for-like 252-step** GBM Plain (250k, 6T) | `1495.6 ms` (`0.167 M/s`) | `20.94 ms` (`11.94 M/s`) | **71.4x** |
+| **Like-for-like 252-step** GBM Antithetic (250k, 6T) | `878.1 ms` (`0.285 M/s`) | `10.66 ms` (`23.45 M/s`) | **82.4x** |
+| **Like-for-like 252-step** GBM 5-Greeks+Theta (250k, 6T) | `2937.6 ms` (`0.085 M/s`) | `23.54 ms` (`10.62 M/s`) | **124.8x** |
+| **Algorithmic 1-step** GBM Plain (100k, 6T) | `632.7 ms` (252-step) | `0.093 ms` (`1,073 M/s`) | **~6,800x** |
+| **Algorithmic 1-step** GBM Plain (10M, 6T) | — | `6.75 ms` (`1,481 M/s`) | — |
+| **Algorithmic 1-step** GBM Antithetic (10M, 6T) | — | `4.52 ms` (`2,215 M/s`) | — |
+| **Algorithmic 1-step** GBM 5-Greeks+Theta (250k, 6T) | `2937.6 ms` (252-step) | `0.498 ms` (`501.6 M/s`) | **~5,900x** |
+
+### Multi-core scaling & exact bitwise reproducibility
+
+Round-robin sweep at `N = 1,000,000` paths × `252` steps (1 warm-up + 5 rounds,
+pinned 6-core `ThreadPool`):
+
+| Model (252 steps, 1M paths) | 1T p50 (ms) | 2T p50 (ms) | 4T p50 (ms) | 6T p50 (ms) | 6T Speedup | Bitwise identical (1/2/4/6T) |
+|---|---:|---:|---:|---:|---:|---|
+| GBM Plain | `468.13` | `230.21` (`2.03x`) | `113.23` (`4.13x`) | `76.10` | **6.15x** | **YES** (`10.467102597230`) |
+| Heston FTE Plain (BK Case I) | `977.74` | `470.78` (`2.08x`) | `238.10` (`4.11x`) | `160.16` | **6.10x** | **YES** (`6.810687825788`) |
+
+The slight >6.0x ratio (~1–2.5% above linear) reflects Windows core-scheduling
+and Zen 3 boost variance on the unpinned 1T inline path (run-to-run spread is
+`1.9–6.1%`); in `bench_pricer`'s paired 1T/6T table, GBM 1M × 252 scales at
+`5.77x` (`460.5 ms -> 79.9 ms`). Because chunks are fixed at 4096 paths,
+seeded deterministically by `(seed, chunk_id)`, and reduced via Chan's merge in
+chunk order, both `price` and `std_error` are **bitwise identical** across 1, 2,
+4, and 6 threads (zero ULPs difference, resolving the 32-ULP reduction-order
+drift of the C++17 baseline).
+
+### Exotics & Heston throughput (`100,000` paths × `252` steps)
+
+| Instrument | 1T p50 (ms) | 6T p50 (ms) | 6T Throughput | 6T Speedup |
+|---|---:|---:|---:|---:|
+| Geometric Asian Call (GBM) | `47.27` | `7.98` | `12.53 M paths/s` | `5.92x` |
+| Arithmetic Asian Call (GBM) | `79.24` | `13.81` | `7.24 M paths/s` | `5.74x` |
+| Barrier Up-and-Out Call (`B = 130`, GBM) | `48.22` | `8.24` | `12.14 M paths/s` | `5.85x` |
+| Lookback Fixed-Strike Call (GBM) | `48.23` | `8.11` | `12.33 M paths/s` | `5.94x` |
+| Lookback Floating-Strike Call (GBM) | `49.04` | `8.01` | `12.48 M paths/s` | `6.12x` |
+| Heston FTE Plain (BK Case I) | `97.59` | `16.74` | `5.97 M paths/s` | `5.83x` |
+| Heston FTE Antithetic (BK Case I) | `53.41` | `9.22` | `10.85 M paths/s` | `5.80x` |
+
+### Equal-work antithetic variates (`250,000` pairs = `500,000` paths, 6T)
+
+Comparing `250,000` antithetic pairs against `500,000` plain paths (equal
+simulated path count, round-robin median of 7):
+
+| Strike | Moneyness | `var_ratio` (1-step) | Implied `rho` | Time ratio (1-step / 252-step) | Efficiency (1-step / 252-step) |
+|---|---|---:|---:|---:|---:|
+| 60 | deep ITM | `24.19` | `-0.959` | `0.64` / `0.54` | **37.6x** / **44.0x** |
+| 80 | ITM | `8.76` | `-0.886` | `0.63` / `0.54` | **14.0x** / **16.0x** |
+| 100 | ATM | `2.02` | `-0.504` | `0.60` / `0.53` | **3.35x** / **3.77x** |
+| 120 | OTM | `1.18` | `-0.149` | `0.63` / `0.54` | **1.85x** / **2.18x** |
+| 140 | deep OTM | `1.06` | `-0.053` | `0.68` / `0.53` | **1.56x** / **1.96x** |
+
+Since `Var((X+Y)/2) = sigma^2 (1 + rho)/2`, `var_ratio = 1 / (1 + rho)`. Deep
+ITM payoffs are nearly linear in the driving Gaussian so pairing cuts variance
+~24x; deep OTM payoffs are mostly zero so variance reduction collapses to
+`1.06x`, while half the RNG work is still saved (`time_ratio ~ 0.53-0.68`).
+
+### Convergence & `N^-0.5` empirical standard error
+
+24 independent replications per `N` (1-step exact European GBM):
+
+| N | Mean MC price | Bias vs. BS | Observed SE (24 reps) | Engine SE |
+|---:|---:|---:|---:|---:|
+| 1,000 | `10.5331208` | `+0.0825372` | `0.4213513` | `0.4519622` |
+| 10,000 | `10.3948431` | `-0.0557405` | `0.1376817` | `0.1489339` |
+| 100,000 | `10.4433309` | `-0.0072526` | `0.0320505` | `0.0466049` |
+| 1,000,000 | `10.4546710` | `+0.0040874` | `0.0135344` | `0.0147535` |
+
+OLS fit of `log(SE)` on `log(N)`: slope **-0.5113** (theory `-0.5000`),
+`R^2 = 0.9914`.
+
+### Forced inlining (`PRICER_FORCE_INLINE`) on vs. off
+
+`PRICER_FORCE_INLINE` expands to `__forceinline` on MSVC and
+`[[gnu::always_inline]] inline` on GCC/Clang. Unlike plain `inline`, which
+compilers treat only as a hint, these are binding: GCC must inline the call
+wherever it can. To measure what the attribute buys, every one of its 226 uses
+was removed (free functions that aren't templates kept a plain `inline` to
+satisfy the ODR), and the full `bench_pricer` suite was run once with and once
+without it on the same Ryzen 5 5600X (`g++ 16.2.0`, Release):
+
+| Workload | With `PRICER_FORCE_INLINE` | Without (plain `inline`) | Slowdown without |
+|---|---:|---:|---:|
+| Black-Scholes price-only (`N = 16,384`) | `10.46 ns/opt` | `18.10 ns/opt` | **1.73x** |
+| Black-Scholes price + 5 Greeks (`N = 16,384`) | `12.21 ns/opt` | `17.84 ns/opt` | **1.46x** |
+| Black-Scholes IV Halley AVX2 (`N = 16,384`) | `78.37 ns/opt` | `114.48 ns/opt` | **1.46x** |
+| GBM 1-step Plain (10M, 1T) | `40.90 ms` | `63.93 ms` | **1.56x** |
+| GBM 1-step 5-Greeks (1M, 1T) | `9.35 ms` | `14.61 ms` | **1.56x** |
+| GBM 252-step Plain (1M, 1T) | `495.43 ms` | `719.42 ms` | **1.45x** |
+| GBM 252-step 5-Greeks (250k, 1T) | `136.83 ms` | `235.14 ms` | **1.72x** |
+| GBM 252-step 5-Greeks (250k, 6T) | `24.39 ms` | `45.52 ms` | **1.87x** |
+| Heston FTE Plain (1M × 252, 1T) | `1010.49 ms` | `1705.49 ms` | **1.69x** |
+| Heston FTE Antithetic (1M × 252, 1T) | `556.03 ms` | `558.57 ms` | `1.00x` |
+| Arithmetic Asian Call (100k × 252, 6T) | `15.34 ms` | `24.92 ms` | **1.62x** |
+| Lookback Fixed-Strike Call (100k × 252, 6T) | `8.21 ms` | `12.32 ms` | **1.50x** |
+
+Prices and standard errors were bitwise identical in both runs, so the attribute
+changes speed only, never results. The largest losses are in the `Dual` / `Jet`
+forward-mode AD paths and the `exp_avx2` / `log_avx2` / `norm_cdf_avx2` kernels:
+these are big enough that GCC's inliner declines them once it is no longer
+forced to, and each out-of-line call then likely costs `Vec4d` values a
+round-trip through memory instead of staying in `ymm` registers. Small `Vec4d` operators are still
+inlined either way. The attribute is therefore kept on every hot-path SIMD and
+AD function.
+
+Each configuration was measured in a single run. The "with" column was built
+from the previous commit, so it also differs from the "without" build in
+unrelated uncommitted edits; the consistency of the slowdown across sections
+nonetheless points at inlining as the dominant cause. Full raw output for both
+runs is in [`bench/inline_comparison.txt`](bench/inline_comparison.txt).
+
+## Repository layout
+
+```text
+include/pricer/
+├── core/      types.hpp, concepts.hpp, dual.hpp, stats.hpp
+├── simd/      vec4d.hpp, avx2_math.hpp, xoshiro_avx2.hpp
+├── models/    gbm.hpp, heston.hpp
+├── payoffs/   european.hpp, asian.hpp, barrier.hpp, lookback.hpp
+└── engines/   black_scholes.hpp, monte_carlo.hpp, thread_pool.hpp
+apps/          cpuid_guard.cpp, cpuid_guard.hpp, price.cpp
+tests/         check.h, test_pricer.cpp, test_no_exceptions.cpp
+bench/         bench_pricer.cpp, REPORT.md, inline_comparison.txt
+```
+
+## Build, test & CI
+
+Requires CMake >= 3.25 and a C++23 compiler on `x86-64-v3` (AVX2 + FMA):
+GCC 14+, Clang 19+, or MSVC 2022+.
 
 ```bash
-g++ -std=c++17 -O2 -march=native -DNDEBUG -pthread -Iinclude \
-    src/*.cpp apps/price.cpp -o price
+# Release build & full test suite
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure   # pricer_tests, test_no_exceptions, price_smoke
+
+# Debug + ASan/UBSan (GCC/Clang)
+cmake -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+      -DPRICER_ENABLE_SANITIZERS=ON -DPRICER_FAST_TESTS=ON
+cmake --build build-asan && ctest --test-dir build-asan --output-on-failure
+
+# Run benchmark suite (full or targeted section)
+./build/bench_pricer
+./build/bench_pricer --section scaling
 ```
 
-Substitute `bench/bench.cpp`, `tests/check_serial.cpp`, or
-`tests/check_greeks.cpp` for the other binaries.
+Optional CMake flags: `-DPRICER_USE_CXX26=ON`, `-DPRICER_MARCH_NATIVE=ON`,
+`-DPRICER_USE_GOOGLE_BENCHMARK=ON`.
 
-- `price` — the pricer: value, standard error, 95% CI, optional Greeks, closed-form comparison.
-- `check_serial` — 22 checks: closed-form identities (put-call parity, delta parity, gamma/vega call-put equality, sign bounds), the serial and antithetic engines against closed form, and `Precision`'s confidence interval.
-- `check_greeks` — 12 checks: every Greek from the parallel engine, error measured in standard errors, plus a theta h-sensitivity scan.
-- `bench` — modes `calibrate`, `sweep [N]`, `converge [reps]`, `repro [N]`, `anti [pairs] [K]`.
+CI (`.github/workflows/ci.yml`) runs every push and PR across:
+- `ubuntu-latest` (`g++-14` Release)
+- `ubuntu-latest` (`clang++-19` Release)
+- `ubuntu-latest` (`g++-14` Debug + ASan/UBSan with `PRICER_FAST_TESTS=ON`)
+- `windows-latest` (MSVC Release)
 
-### Testing approach
+### Testing methodology
 
-Agreement is asserted in **standard errors**, not absolute tolerances: under a
-correct estimator `(mc - ref)/se` is ~N(0,1) at any N, so the 4-sigma bound means
-the same thing at every sample size and doesn't need re-tuning when N changes —
-which is the usual route by which a tolerance gets quietly loosened until it
-passes. NaN is rejected explicitly, since `fabs(NaN) > 4.0` is false and would
-otherwise be the one result that reported a pass. Seeds are fixed and variates
-are keyed by global path index, so the checks are deterministic per build rather
-than flaky.
+Statistical checks in `tests/test_pricer.cpp` use standard-error-normalized
+`within_se` assertions (`|mc - ref| <= 4 * se`) with explicit `NaN` rejection
+(`tests/check.h`). Analytic/numerical verification covers:
+- AVX2 math kernels (`exp`, `log`, `sincos`, `norm_cdf`) across 100k points
+  against `std::cmath` (`< 1e-15` rel/abs; left-tail `norm_cdf < 1e-13` rel)
+- `Xoshiro256++ x4` bit-for-bit scalar parity, `jump()`/`long_jump()` vectors,
+  4-sigma Box-Muller moments, 20-bin Pearson chi-squared, and extreme tails
+- Black-Scholes put-call/Delta/Gamma/Vega parity (`q > 0`, `r < 0`), `Jet<Vec4d, 3>`
+  AD oracle, and AVX2 IV round-trip across 16,384 contracts
+- Exact discrete Kemna–Vorst Geometric Asian, Jensen inequalities, Reiner–Rubinstein
+  + Broadie–Glasserman–Kou continuity-shifted Barriers/Lookbacks with multi-step
+  refinement (`m = 64, 252, 1000`), and CRN In-Out parity (`<= 1.8e-15`)
+- Self-contained Fang–Oosterlee COS Heston oracle (`Broadie-Kaya Case I` &
+  Feller-satisfying benchmarks) + Heston sensitivities (including `v0 = 0`)
+- Persistent `ThreadPool` caller-affinity preservation and exact bitwise
+  thread-count invariance across `1, 2, 4, 6` threads
 
-The harness (`tests/check.h`) is ~60 lines rather than Catch2 or GoogleTest,
-which would add a configure-time network dependency for what amounts to a
-failure counter and an exit status.
+## Future extensions
 
-The suite is verified by fault injection — each of these was introduced into a
-scratch copy and confirmed to fail the build's `ctest`:
-
-| Injected fault | Caught by | Worst deviation |
-|---|---|---|
-| `exp(-r*K)` discounting (uses strike as time) | `check_serial` | exact-equality check, off by 10.4 |
-| GBM drift regressed to real-world `mu` | `check_serial` | 492 sigma |
-| `-1.0` term dropped from LR gamma estimator | `check_greeks` | 226 sigma |
-
-## Known limitations
-
-- Path simulation runs 252 steps for a payoff that only depends on S_T. For European options a single draw of the terminal log-return would be exact and ~252x cheaper; the per-step loop is groundwork for the path-dependent payoffs below, which don't exist yet.
-- The serial engine (`MonteCarloEngine`/`GBM`/`Precision`) and `ParallelEngine` are separate implementations that share only the payoff and parameter structs.
-- `Option` dispatches on an enum, so new payoffs mean editing the class.
-
-## Roadmap
-
-- Sobol and other quasi-Monte Carlo sequences.
-- Path-dependent payoffs — Asian and barrier options.
-- Heston stochastic volatility.
-- Control variates (the closed-form price is already available as the control).
+- Sobol / Halton quasi-Monte Carlo sequences via `SamplingPolicy`
+- Control variates (e.g. Geometric Asian control for Arithmetic Asian, or BS control for Heston)
+- American / Bermudan exercise via Longstaff–Schwartz regression

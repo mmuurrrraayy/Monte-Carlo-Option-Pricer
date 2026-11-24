@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-*/
 out/
 
 # Compiled output
@@ -12,11 +13,14 @@ out/
 *.lib
 *.exp
 
-# CMake scratch (in-source configure)
+# CMake / CTest scratch
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+compile_commands.json
+CTestTestfile.cmake
+Testing/
 
 # Editors / IDEs
 .vs/

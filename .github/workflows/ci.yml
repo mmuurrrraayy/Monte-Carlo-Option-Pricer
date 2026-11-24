@@ -8,21 +8,78 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  ubuntu-gcc14-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install g++-14 and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 ninja-build
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_CXX_COMPILER=g++-14 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  ubuntu-clang19-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install clang-19, lld-19, libstdc++-14-dev, and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 lld-19 libstdc++-14-dev ninja-build
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  ubuntu-gcc14-asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install g++-14 and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 ninja-build
+
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_BUILD_TYPE=Debug
+          -DPRICER_ENABLE_SANITIZERS=ON
+          -DPRICER_FAST_TESTS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows-msvc-release:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build
 
       - name: Build
         run: cmake --build build --config Release
 
       - name: Test
-        working-directory: build
-        run: ctest --build-config Release --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure
